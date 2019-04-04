@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bifrost/log"
+	"go-astilectron-demo/log"
 	"encoding/json"
 	"fmt"
 	"github.com/asticode/go-astilectron"

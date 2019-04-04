@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bifrost/log"
+	"go-astilectron-demo/log"
 	"flag"
 	"github.com/asticode/go-astilectron"
 	"github.com/asticode/go-astilog"

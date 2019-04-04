@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bifrost/log"
+	"go-astilectron-demo/log"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
