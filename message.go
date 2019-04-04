@@ -1,156 +1,148 @@
 package main
 
 import (
+	"bifrost/log"
 	"encoding/json"
-	"io/ioutil"
-	"os"
-	"os/user"
-	"path/filepath"
-	"sort"
-	"strconv"
-
-	"github.com/asticode/go-astichartjs"
+	"fmt"
 	"github.com/asticode/go-astilectron"
-	"github.com/asticode/go-astilectron-bootstrap"
+	"path"
+	"strings"
 )
 
-// handleMessages handles messages
-func handleMessages(_ *astilectron.Window, m bootstrap.MessageIn) (payload interface{}, err error) {
-	switch m.Name {
-	case "explore":
-		// Unmarshal payload
-		var path string
-		if len(m.Payload) > 0 {
-			// Unmarshal payload
-			if err = json.Unmarshal(m.Payload, &path); err != nil {
-				payload = err.Error()
-				return
-			}
-		}
 
-		// Explore
-		if payload, err = explore(path); err != nil {
-			payload = err.Error()
+/******************************* intercom window *************************************/
+func intercomShow(intercomUrl string) (err error) {
+	var oneW *astilectron.Window
+
+	log.Info("-------------------------------------------------------")
+	if intercomW == nil {
+
+		log.Info("intercom url:", path.Join(listener.Addr().String(), intercomUrl))
+		oneW, err = a.NewWindow("http://" + path.Join(listener.Addr().String(), intercomUrl), &astilectron.WindowOptions{
+			BackgroundColor: astilectron.PtrStr("#fff"),
+			Center:          astilectron.PtrBool(false),
+			Modal:           astilectron.PtrBool(true),
+			Show:            astilectron.PtrBool(false),
+			HasShadow:       astilectron.PtrBool(false),
+			Resizable:       astilectron.PtrBool(false),
+			//Frame:           astilectron.PtrBool(false),
+			Height:          astilectron.PtrInt(500),
+			Width:           astilectron.PtrInt(560),
+			//SkipTaskbar:     astilectron.PtrBool(true),
+			Title: astilectron.PtrStr("intercom"),
+		})
+		/*
+			windowsResizablePtr = astilectron.PtrBool(false)
+			windowsFramePtr = astilectron.PtrBool(false)
+			windowsHeightPtr = astilectron.PtrInt(500 )
+			windowsWidthPtr = astilectron.PtrInt(700 )
+		*/
+		if err != nil {
+			log.Error("newWindow():", err)
 			return
 		}
+
+		// Handle messages
+		oneW.OnMessage(HandleMessages(oneW, intercomHandleMessages))
+
+
+		if err = oneW.Create(); err != nil {
+			log.Error("newWindow():", err)
+			return
+		}
+		oneW.On(astilectron.EventNameWindowEventClosed, func(e astilectron.Event) (deleteListener bool) {
+			intercomW = nil
+			return true
+		})
+		intercomW = oneW
 	}
+
+	if intercomW != nil {
+		if !intercomW.IsDestroyed() {
+			log.Info("intercom show ..................")
+			intercomW.Show()
+		}
+	}
+
 	return
 }
 
-// Exploration represents the results of an exploration
-type Exploration struct {
-	Dirs       []Dir              `json:"dirs"`
-	Files      *astichartjs.Chart `json:"files,omitempty"`
-	FilesCount int                `json:"files_count"`
-	FilesSize  string             `json:"files_size"`
-	Path       string             `json:"path"`
-}
+// handleMessages handles messages
+func intercomHandleMessages(win *astilectron.Window, m MessageIn) (payload interface{}, err error) {
 
-// PayloadDir represents a dir payload
-type Dir struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-}
-
-// explore explores a path.
-// If path is empty, it explores the user's home directory
-func explore(path string) (e Exploration, err error) {
-	// If no path is provided, use the user's home dir
-	if len(path) == 0 {
-		var u *user.User
-		if u, err = user.Current(); err != nil {
-			return
-		}
-		path = u.HomeDir
+	switch m.Name {
+	case "intercomCmd":
+		payload, err = intercomWndCmd(m)
 	}
 
-	// Read dir
-	var files []os.FileInfo
-	if files, err = ioutil.ReadDir(path); err != nil {
+	return
+}
+
+func structToStr(st interface{}) string {
+	retByteArr, _   := json.Marshal(&st)
+	return string(retByteArr)
+}
+type CbBaseInfo struct {
+	Status     string          `json:"status"`
+	ErrMsg     string          `json:"errMsg"`
+}
+
+func msgToStr(message json.RawMessage) (jsonStr string) {
+
+	jsonStr = string(message)
+	// 去除字符串中间的 \
+	jsonStr = strings.Replace(jsonStr, "\\", "", -1)
+	// 去除字符串首尾的 "
+	jsonStr = strings.Trim(jsonStr, "\"")
+	return
+}
+
+func intercomWndCmd(m MessageIn) (payload string, err error) {
+
+	var cbIntercom CbBaseInfo
+	var scbbi = CbBaseInfo{"success", ""}
+
+	type intercomCmd struct {
+		 Cmd string `json:"cmd"`
+		 Exension struct{
+		 	Url string `json:"url"`
+		 } `json:"extension"`
+	}
+
+	var wndcmd  intercomCmd
+
+	jsonStr := msgToStr(m.Payload)
+	//log.Info("intercomWndCmd():", jsonStr)
+	if err = json.Unmarshal([]byte(jsonStr), &wndcmd); err != nil {
+		log.Error(err)
+		cbIntercom.Status = "failed"
+		cbIntercom.ErrMsg = fmt.Sprint(err)
+		payload = structToStr(cbIntercom)
 		return
 	}
 
-	// Init exploration
-	e = Exploration{
-		Dirs: []Dir{},
-		Path: path,
-	}
-
-	// Add previous dir
-	if filepath.Dir(path) != path {
-		e.Dirs = append(e.Dirs, Dir{
-			Name: "..",
-			Path: filepath.Dir(path),
-		})
-	}
-
-	// Loop through files
-	var sizes []int
-	var sizesMap = make(map[int][]string)
-	var filesSize int64
-	for _, f := range files {
-		if f.IsDir() {
-			e.Dirs = append(e.Dirs, Dir{
-				Name: f.Name(),
-				Path: filepath.Join(path, f.Name()),
-			})
-		} else {
-			var s = int(f.Size())
-			sizes = append(sizes, s)
-			sizesMap[s] = append(sizesMap[s], f.Name())
-			e.FilesCount++
-			filesSize += f.Size()
+	switch wndcmd.Cmd {
+	case "show":
+		err = intercomShow(wndcmd.Exension.Url)
+		if err != nil {
+			log.Error(err)
+			cbIntercom.Status = "failed"
+			cbIntercom.ErrMsg = fmt.Sprint(err)
+			payload = structToStr(cbIntercom)
+			return
 		}
-	}
-
-	// Prepare files size
-	if filesSize < 1e3 {
-		e.FilesSize = strconv.Itoa(int(filesSize)) + "b"
-	} else if filesSize < 1e6 {
-		e.FilesSize = strconv.FormatFloat(float64(filesSize)/float64(1024), 'f', 0, 64) + "kb"
-	} else if filesSize < 1e9 {
-		e.FilesSize = strconv.FormatFloat(float64(filesSize)/float64(1024*1024), 'f', 0, 64) + "Mb"
-	} else {
-		e.FilesSize = strconv.FormatFloat(float64(filesSize)/float64(1024*1024*1024), 'f', 0, 64) + "Gb"
-	}
-
-	// Prepare files chart
-	sort.Ints(sizes)
-	if len(sizes) > 0 {
-		e.Files = &astichartjs.Chart{
-			Data: &astichartjs.Data{Datasets: []astichartjs.Dataset{{
-				BackgroundColor: []string{
-					astichartjs.ChartBackgroundColorYellow,
-					astichartjs.ChartBackgroundColorGreen,
-					astichartjs.ChartBackgroundColorRed,
-					astichartjs.ChartBackgroundColorBlue,
-					astichartjs.ChartBackgroundColorPurple,
-				},
-				BorderColor: []string{
-					astichartjs.ChartBorderColorYellow,
-					astichartjs.ChartBorderColorGreen,
-					astichartjs.ChartBorderColorRed,
-					astichartjs.ChartBorderColorBlue,
-					astichartjs.ChartBorderColorPurple,
-				},
-			}}},
-			Type: astichartjs.ChartTypePie,
-		}
-		var sizeOther int
-		for i := len(sizes) - 1; i >= 0; i-- {
-			for _, l := range sizesMap[sizes[i]] {
-				if len(e.Files.Data.Labels) < 4 {
-					e.Files.Data.Datasets[0].Data = append(e.Files.Data.Datasets[0].Data, sizes[i])
-					e.Files.Data.Labels = append(e.Files.Data.Labels, l)
-				} else {
-					sizeOther += sizes[i]
-				}
+	case "close":
+		if intercomW != nil {
+			if !intercomW.IsDestroyed() {
+				intercomW.Destroy()
+				//intercomA.Close()
+				log.Info("intercom close ...................")
+				intercomW = nil
 			}
 		}
-		if sizeOther > 0 {
-			e.Files.Data.Datasets[0].Data = append(e.Files.Data.Datasets[0].Data, sizeOther)
-			e.Files.Data.Labels = append(e.Files.Data.Labels, "other")
-		}
+	default:
 	}
+
+	payload = structToStr(scbbi)
 	return
 }
